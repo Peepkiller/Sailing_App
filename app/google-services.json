@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "46229658211",
+    "project_id": "sailingapp-864aa",
+    "storage_bucket": "sailingapp-864aa.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:46229658211:android:2730b9119f8a8a4bfe3656",
+        "android_client_info": {
+          "package_name": "com.example.sailingapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDz7auNCyF3ED3P_uzGrkaEzsV5NmHz1Xw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
