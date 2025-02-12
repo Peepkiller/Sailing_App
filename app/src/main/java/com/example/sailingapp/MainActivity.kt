@@ -1,6 +1,7 @@
 package com.example.sailingapp
 
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -9,7 +10,6 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.BottomAppBar
@@ -50,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.example.sailingapp.ui.theme.SailingAppTheme
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
@@ -57,23 +57,34 @@ import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRequest
 import com.google.android.libraries.places.api.net.PlacesClient
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
-import com.google.maps.android.compose.CameraPositionState
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
-import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.rememberCameraPositionState
+import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import android.Manifest
+import android.util.Log
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.Cloud
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.CameraPositionState
+import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.rememberCameraPositionState
+import com.google.maps.android.compose.rememberMarkerState
+import com.google.maps.android.compose.Marker
+
+
 
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var locationHelper: LocationHelper
     private lateinit var placesClient: PlacesClient
-    private var userLatitude = 0.0
-    private var userLongitude = 0.0
+    private var userLatitude by mutableDoubleStateOf(0.0)
+    private var userLongitude  by mutableDoubleStateOf(0.0)
+    private lateinit var requestPermissionLauncher: ActivityResultLauncher<String>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,34 +92,23 @@ class MainActivity : ComponentActivity() {
         FirebaseDatabase.getInstance().setPersistenceEnabled(true)
 
         // Initialize PlacesClient
-        placesClient = PlacesHelper.initializePlaces(this, "AIzaSyBzoYcwXenBePtM1EGvS2mD14d3d_dfA4s")
+        placesClient = PlacesHelper.initializePlaces(this)
 
+        // Initialize LocationHelper
+        locationHelper = LocationHelper(this)
 
-        // Register permission launcher
-        registerForActivityResult(
+        // Initialize the permission request launcher
+        requestPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { isGranted: Boolean ->
             if (isGranted) {
-                // Fetch location if permission is granted
-                locationHelper.fetchLocation { latitude, longitude ->
-                    userLatitude = latitude
-                    userLongitude = longitude
-                }
+                fetchLocation()
             } else {
                 Toast.makeText(this, "Location permission denied", Toast.LENGTH_SHORT).show()
             }
         }
 
-        // Initialize LocationHelper
-        locationHelper = LocationHelper(this)
-
-        // Check permissions and fetch location
-        locationHelper.checkLocationPermission {
-            locationHelper.fetchLocation { latitude, longitude ->
-                userLatitude = latitude
-                userLongitude = longitude
-            }
-        }
+        checkLocationPermission()
 
         // Set up UI
         setContent {
@@ -121,8 +121,27 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-}
 
+    private fun checkLocationPermission() {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+
+        } else {
+            fetchLocation()
+        }
+    }
+
+    private fun fetchLocation() {
+        locationHelper.fetchLocation { latitude, longitude ->
+            userLatitude = latitude
+            userLongitude = longitude
+        }
+    }
+}
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
@@ -237,7 +256,7 @@ class MainActivity : ComponentActivity() {
                 )
             ) {
                 Marker(
-                    state = MarkerState(position = LatLng(lat, lng)),
+                    state = rememberMarkerState(position = LatLng(lat, lng)),
                     title = "You are here"
                 )
             }
@@ -275,11 +294,11 @@ class MainActivity : ComponentActivity() {
 
                             val placeRequest = FetchPlaceRequest.builder(
                                 placeId,
-                                listOf(Place.Field.LOCATION)
+                                listOf(Place.Field.LAT_LNG)
                             ).build()
 
                             val placeResponse = placesClient.fetchPlace(placeRequest).await()
-                            val latLng = placeResponse.place.location
+                            val latLng = placeResponse.place.latLng
 
                             if (latLng != null) {
                                 cameraPositionState.position =
@@ -294,78 +313,158 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @Composable
-    fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Double) {
-        var weatherData by remember { mutableStateOf<String?>(null) }
-        var isLoading by remember { mutableStateOf(true) }
-        var errorMessage by remember { mutableStateOf<String?>(null) }
-        val coroutineScope = rememberCoroutineScope()
+@Composable
+fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Double) {
+    var weatherData by remember { mutableStateOf<String?>(null) }
+    var tideData by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
-        // Fetch weather data when the screen is loaded
-        LaunchedEffect(Unit) {
-            coroutineScope.launch {
-                isLoading = true
-                try {
-                    val url =
-                        "https://api.open-meteo.com/v1/forecast?latitude=28.5383&longitude=-81.3792&current=temperature_2m,precipitation,wind_speed_10m,wind_direction_10m&hourly=temperature_2m,precipitation_probability,rain,visibility,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset&temperature_unit=fahrenheit&wind_speed_unit=kn&precipitation_unit=inch&timezone=GMT"
+    val database = FirebaseDatabase.getInstance()
+    val safeLatLng = "${latitude.toString().replace(".", "_dot_").replace("-", "_neg_")}_${longitude.toString().replace(".", "_dot_").replace("-", "_neg_")}"
+    val weatherRef = database.getReference("weather/$safeLatLng")
+    val tideRef = database.getReference("tide/$safeLatLng")
 
-                    val weatherResponse = fetchWeatherDataWithGson(url)
+    // Ensure offline sync
+    weatherRef.keepSynced(true)
+    tideRef.keepSynced(true)
 
-                    weatherData = """
-                    Latitude: ${weatherResponse.latitude}
-                    Longitude: ${weatherResponse.longitude}
-                    Temperature (First Hour): ${weatherResponse.hourly.temperature_2m[0]} ${weatherResponse.hourly_units.temperature_2m}
-                    Precipitation Probability: ${weatherResponse.hourly.precipitation_probability[0]}%
-                    Rain: ${weatherResponse.hourly.rain[0]} ${weatherResponse.hourly_units.rain}
+
+    fun fetchData() {
+        coroutineScope.launch {
+            isLoading = true
+            try {
+                val weatherUrl =
+                    "https://api.open-meteo.com/v1/forecast?latitude=$latitude&longitude=$longitude" +
+                            "&current=temperature_2m,precipitation,wind_speed_10m,wind_direction_10m" +
+                            "&hourly=temperature_2m,precipitation_probability,rain,visibility,wind_speed_10m" +
+                            "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset" +
+                            "&temperature_unit=fahrenheit&wind_speed_unit=kn&precipitation_unit=inch&timezone=GMT"
+
+                val weatherResponse = fetchWeatherDataWithGson(weatherUrl)
+                weatherData = """
+                    Temperature: ${weatherResponse.hourly.temperature_2m[0]} ${weatherResponse.hourly_units.temperature_2m}
                     Wind Speed: ${weatherResponse.hourly.wind_speed_10m[0]} ${weatherResponse.hourly_units.wind_speed_10m}
-                    Max Temp Today: ${weatherResponse.daily.temperature_2m_max[0]} ${weatherResponse.daily_units.temperature_2m_max}
-                    Min Temp Today: ${weatherResponse.daily.temperature_2m_min[0]} ${weatherResponse.daily_units.temperature_2m_min}
+                    Max Temp: ${weatherResponse.daily.temperature_2m_max[0]} ${weatherResponse.daily_units.temperature_2m_max}
+                    Min Temp: ${weatherResponse.daily.temperature_2m_min[0]} ${weatherResponse.daily_units.temperature_2m_min}
                     Sunrise: ${weatherResponse.daily.sunrise[0]}
                     Sunset: ${weatherResponse.daily.sunset[0]}
                 """.trimIndent()
-                } catch (e: Exception) {
-                    // Attempt to retrieve cached data from Firebase if there's an error
-                    getWeatherDataFromFirebase(
-                        latitude = latitude,
-                        longitude = longitude,
-                        onSuccess = { cachedData ->
-                            weatherData = cachedData
-                        },
-                        onFailure = { error ->
-                            errorMessage = error.message ?: "Failed to fetch weather data"
-                        }
-                    )
-                } finally {
+
+                // Fetch tide data
+                val tideResponse = TideService.fetchTideData()
+                tideData = tideResponse?.data?.joinToString("\n") { "${it.time}: ${it.height} ft" }
+                    ?: "No tide data available"
+
+                // Save to Firebase
+                weatherRef.setValue(weatherData)
+                tideRef.setValue(tideData)
+
+            } catch (e: Exception) {
+                errorMessage = "Error fetching data: ${e.localizedMessage}"
+                Log.e("WeatherScreen", "API Fetch Error: ${e.message}", e)
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    //Load Firebase data first, then fetch API data if needed
+    LaunchedEffect(Unit) {
+        isLoading = true
+
+        val weatherListener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (snapshot.exists()) {
+                    weatherData = snapshot.getValue(String::class.java)
+                }
+                // Fetch API only if both Firebase data are missing
+                if (weatherData == null && tideData == null) {
+                    fetchData()
+                } else {
                     isLoading = false
                 }
             }
+
+            override fun onCancelled(error: DatabaseError) {
+                errorMessage = "Firebase weather error: ${error.message}"
+                Log.e("WeatherScreen", "Firebase Weather Error: ${error.message}")
+                isLoading = false
+            }
         }
 
-        // UI rendering
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .padding(16.dp)
-        ) {
-            when {
-                isLoading -> Text("Loading weather data...", Modifier.align(Alignment.Center))
-                errorMessage != null -> Text("Error: $errorMessage", Modifier.align(Alignment.Center))
-                weatherData != null -> {
-                    Column {
-                        Text(
-                            text = "Weather Data:",
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                        Text(
-                            text = weatherData ?: "No data",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
+        val tideListener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (snapshot.exists()) {
+                    tideData = snapshot.getValue(String::class.java)
+                }
+                // Fetch API only if both Firebase data are missing
+                if (weatherData == null && tideData == null) {
+                    fetchData()
+                } else {
+                    isLoading = false
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                errorMessage = "Firebase tide error: ${error.message}"
+                Log.e("WeatherScreen", "Firebase Tide Error: ${error.message}")
+                isLoading = false
+            }
+        }
+
+        // Attach listeners
+        weatherRef.addListenerForSingleValueEvent(weatherListener)
+        tideRef.addListenerForSingleValueEvent(tideListener)
+    }
+
+    // Refresh Button Effect
+    LaunchedEffect(weatherData, tideData) {
+        isLoading = false
+    }
+
+    // UI rendering
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        when {
+            isLoading -> Text("Loading weather and tide data...", Modifier.align(Alignment.Center))
+            errorMessage != null -> Text("Error: $errorMessage", Modifier.align(Alignment.Center))
+            else -> {
+                Column {
+                    // Refresh Button
+                    Button(
+                        onClick = { fetchData() },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    ) {
+                        Text("Refresh Data")
                     }
+
+                    // Weather Data
+                    Text(
+                        text = "Weather Data:",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(text = weatherData ?: "No weather data available")
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Tide Data
+                    Text(
+                        text = "Tide Data:",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    Text(text = tideData ?: "No tide data available")
                 }
             }
         }
     }
+}
 
     @Composable
     fun MoreScreen(modifier: Modifier = Modifier, onNavigate: (String) -> Unit) {
@@ -398,6 +497,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
 
 @Composable
 fun CompassScreen(onBack: () -> Unit) {
