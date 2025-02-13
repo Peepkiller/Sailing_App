@@ -16,6 +16,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -55,7 +56,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -224,6 +229,10 @@ fun GpsLogsScreen(
     var isLocationInitialized by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val locationHelper = remember { LocationHelper(context as Activity) }
+    val recentSearches by remember { mutableStateOf(RecentSearchesHelper.getSearchHistory(context)) }
+    var showRecentSearches by remember { mutableStateOf(searchQuery.isEmpty()) }
+    val focusRequester = remember { FocusRequester() }
+    var isSearchFocused by remember { mutableStateOf(false) }
 
     val markerState = remember { mutableStateOf(MarkerState(LatLng(lat, lng))) }
     var searchedLatLng by remember { mutableStateOf<LatLng?>(null) }
@@ -241,7 +250,24 @@ fun GpsLogsScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    LaunchedEffect(cameraPositionState.isMoving) {
+        if (cameraPositionState.isMoving) {
+            showRecentSearches = false
+            isSearchFocused = false
+            showPredictions = false
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = {
+                        isSearchFocused = false
+                        showRecentSearches = false
+                    }
+                )
+            }
+    ) {
         // Google Map setup
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
@@ -298,6 +324,7 @@ fun GpsLogsScreen(
                 value = searchQuery,
                 onValueChange = {
                     onSearchQueryChanged(it)
+                    showRecentSearches = it.isEmpty() && isSearchFocused
                     if (it.isNotEmpty()) {
                         // Fetch place predictions
                         val request = FindAutocompletePredictionsRequest.builder()
@@ -321,7 +348,45 @@ fun GpsLogsScreen(
                 },
                 placeholder = { Text("Search places...") },
                 modifier = Modifier.fillMaxWidth()
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { focusState ->
+                        isSearchFocused = focusState.isFocused
+                        showRecentSearches = isSearchFocused
+                    }
             )
+
+            // Show recent searches when search box is empty
+            if (showRecentSearches && isSearchFocused && recentSearches.isNotEmpty()) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .heightIn(max = 150.dp)
+                ) {
+                    items(recentSearches) { recent ->
+                        Text(
+                            text = recent,
+                            color = Color.Black,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onSearchQueryChanged(recent)
+                                    showRecentSearches = false
+                                    isSearchFocused = false
+                                    getPlaceDetails(recent, placesClient) { latLng ->
+                                        if (latLng != null) {
+                                            searchedLatLng = latLng
+                                            cameraPositionState.position =
+                                                CameraPosition.fromLatLngZoom(latLng, 15f)
+                                        }
+                                    }
+                                }
+                                .padding(8.dp)
+                        )
+                    }
+                }
+            }
+
 
             // Show predictions list when user types
             if (showPredictions) {
@@ -334,6 +399,7 @@ fun GpsLogsScreen(
                     items(predictions) { prediction ->
                         Text(
                             text = prediction.getPrimaryText(null).toString(),
+                            color = Color.Black,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
@@ -341,6 +407,7 @@ fun GpsLogsScreen(
                                     getPlaceDetails(prediction.placeId, placesClient) { latLng ->
                                         if (latLng != null) {
                                             searchedLatLng = latLng
+                                            RecentSearchesHelper.saveSearch(context, prediction.getPrimaryText(null).toString()) // Save recent search
                                             cameraPositionState.position = CameraPosition.fromLatLngZoom(latLng, 15f)
                                         }
                                     }
@@ -524,8 +591,7 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
     }
 
     // UI rendering
-    Box(
-        modifier = modifier
+    Box(modifier = modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
@@ -666,8 +732,7 @@ fun CompassScreen(onBack: () -> Unit) {
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        Box(
-            modifier = Modifier
+        Box(modifier = Modifier
                 .size(200.dp)
                 .background(MaterialTheme.colorScheme.primary, shape = CircleShape),
             contentAlignment = Alignment.Center
