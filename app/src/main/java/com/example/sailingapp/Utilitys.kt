@@ -34,4 +34,5 @@ class LocationHelper(private val activity: Activity) {
             Toast.makeText(activity, "Error fetching location: ${it.message}", Toast.LENGTH_SHORT).show()
         }
     }
+
 }

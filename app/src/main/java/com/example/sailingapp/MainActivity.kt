@@ -1,5 +1,6 @@
 package com.example.sailingapp
 
+import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.hardware.Sensor
@@ -7,25 +8,33 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,7 +42,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -47,35 +55,33 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.sailingapp.PlacesHelper.getPlaceDetails
 import com.example.sailingapp.ui.theme.SailingAppTheme
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.libraries.places.api.model.Place
-import com.google.android.libraries.places.api.net.FetchPlaceRequest
+import com.google.android.libraries.places.api.model.AutocompletePrediction
 import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRequest
 import com.google.android.libraries.places.api.net.PlacesClient
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.maps.android.compose.CameraPositionState
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.rememberCameraPositionState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import android.Manifest
-import android.util.Log
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.filled.Cloud
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.CameraPositionState
-import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.rememberCameraPositionState
-import com.google.maps.android.compose.rememberMarkerState
-import com.google.maps.android.compose.Marker
-
-
+import kotlinx.coroutines.withContext
 
 
 class MainActivity : ComponentActivity() {
@@ -143,7 +149,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun MainScreen(userLatitude: Double, userLongitude: Double, placesClient: PlacesClient) {
         var selectedTab by remember { mutableIntStateOf(0) } // State for tab selection
@@ -154,23 +159,6 @@ class MainActivity : ComponentActivity() {
         }
 
         Scaffold(
-            topBar = {
-                if (selectedTab == 0) { // Only show search bar on GPS & Logs tab
-                    TopAppBar(
-                        title = {},
-                        actions = {
-                            TextField(
-                                value = searchQuery,
-                                onValueChange = { searchQuery = it },
-                                placeholder = { Text("Search places...") },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(8.dp)
-                            )
-                        }
-                    )
-                }
-            },
             bottomBar = {
                 BottomAppBar {
                     IconButton(onClick = { selectedTab = 0 }) {
@@ -194,6 +182,7 @@ class MainActivity : ComponentActivity() {
                     userLatitude = userLatitude,
                     userLongitude = userLongitude,
                     searchQuery = searchQuery,
+                    onSearchQueryChanged = { newQuery -> searchQuery = newQuery },
                     placesClient = placesClient,
                     cameraPositionState = cameraPositionState
                 )
@@ -220,98 +209,150 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @Composable
-    fun GpsLogsScreen(
-        modifier: Modifier = Modifier,
-        userLatitude: Double,
-        userLongitude: Double,
-        searchQuery: String,
-        placesClient: PlacesClient,
-        cameraPositionState: CameraPositionState
-    ) {
-        var lat by remember { mutableDoubleStateOf(userLatitude) }
-        var lng by remember { mutableDoubleStateOf(userLongitude) }
-        var isLocationInitialized by remember { mutableStateOf(false) }
-        val context = LocalContext.current
-        val locationHelper = remember { LocationHelper(context as Activity) }
+@Composable
+fun GpsLogsScreen(
+    modifier: Modifier = Modifier,
+    userLatitude: Double,
+    userLongitude: Double,
+    searchQuery: String,
+    onSearchQueryChanged: (String) -> Unit,
+    placesClient: PlacesClient,
+    cameraPositionState: CameraPositionState
+) {
+    var lat by remember { mutableDoubleStateOf(userLatitude) }
+    var lng by remember { mutableDoubleStateOf(userLongitude) }
+    var isLocationInitialized by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val locationHelper = remember { LocationHelper(context as Activity) }
 
-        // Initialize location on app launch
-        LaunchedEffect(Unit) {
-            locationHelper.fetchLocation { latitude, longitude ->
-                lat = latitude
-                lng = longitude
-                cameraPositionState.position = CameraPosition.fromLatLngZoom(LatLng(lat, lng), 15f)
-                isLocationInitialized = true
-            }
+    val markerState = remember { mutableStateOf(MarkerState(LatLng(lat, lng))) }
+    var searchedLatLng by remember { mutableStateOf<LatLng?>(null) }
+    var predictions by remember { mutableStateOf<List<AutocompletePrediction>>(emptyList()) }
+    var showPredictions by remember { mutableStateOf(false) }
+
+    // Initialize location on app launch
+    LaunchedEffect(Unit) {
+        locationHelper.fetchLocation { latitude, longitude ->
+            lat = latitude
+            lng = longitude
+            cameraPositionState.position = CameraPosition.fromLatLngZoom(LatLng(lat, lng), 15f)
+            markerState.value = MarkerState(LatLng(lat, lng))
+            isLocationInitialized = true
         }
+    }
 
-        Box(modifier = modifier.fillMaxSize()) {
-            // Google Map setup
-            GoogleMap(
-                modifier = Modifier.fillMaxSize(),
-                cameraPositionState = cameraPositionState,
-                uiSettings = MapUiSettings(
-                    compassEnabled = true,
-                    myLocationButtonEnabled = false
-                )
-            ) {
+    Box(modifier = modifier.fillMaxSize()) {
+        // Google Map setup
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            cameraPositionState = cameraPositionState,
+            uiSettings = MapUiSettings(
+                compassEnabled = true,
+                myLocationButtonEnabled = false
+            )
+        ) {
+            // Marker for user's current location
+            if (isLocationInitialized) {
                 Marker(
-                    state = rememberMarkerState(position = LatLng(lat, lng)),
+                    state = markerState.value,
                     title = "You are here"
                 )
             }
 
-            // Floating Action Button to fetch and update location
-            FloatingActionButton(
-                onClick = {
-                    locationHelper.fetchLocation { latitude, longitude ->
-                        lat = latitude
-                        lng = longitude
-                        cameraPositionState.position = CameraPosition.fromLatLngZoom(LatLng(lat, lng), 15f)
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(16.dp)
-            ) {
-                Icon(imageVector = Icons.Filled.LocationOn, contentDescription = "Precise Location")
+            // Marker for searched location
+            searchedLatLng?.let {
+                Marker(
+                    state = MarkerState(it),
+                    title = "Searched Location",
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
+                )
             }
+        }
 
-            // Search bar logic for places
-            LaunchedEffect(searchQuery) {
-                if (searchQuery.isNotEmpty()) {
-                    val request = FindAutocompletePredictionsRequest.builder()
-                        .setQuery(searchQuery)
-                        .build()
+        // Floating Action Button to fetch and update location
+        FloatingActionButton(
+            onClick = {
+                locationHelper.fetchLocation { latitude, longitude ->
+                    lat = latitude
+                    lng = longitude
+                    cameraPositionState.position = CameraPosition.fromLatLngZoom(LatLng(lat, lng), 15f)
+                    markerState.value = MarkerState(LatLng(lat, lng))
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(16.dp,  top = 90.dp)
+        ) {
+            Icon(imageVector = Icons.Filled.LocationOn, contentDescription = "Find me")
+        }
 
-                    try {
-                        val response = placesClient.findAutocompletePredictions(request).await()
-                        val predictions = response.autocompletePredictions
+        // Search bar logic for places
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .background(Color.White, shape = RoundedCornerShape(8.dp))
+                .padding(8.dp)
+        ) {
+            TextField(
+                value = searchQuery,
+                onValueChange = {
+                    onSearchQueryChanged(it)
+                    if (it.isNotEmpty()) {
+                        // Fetch place predictions
+                        val request = FindAutocompletePredictionsRequest.builder()
+                            .setQuery(it)
+                            .build()
 
-                        if (predictions.isNotEmpty()) {
-                            val firstPrediction = predictions.first()
-                            val placeId = firstPrediction.placeId
-
-                            val placeRequest = FetchPlaceRequest.builder(
-                                placeId,
-                                listOf(Place.Field.LAT_LNG)
-                            ).build()
-
-                            val placeResponse = placesClient.fetchPlace(placeRequest).await()
-                            val latLng = placeResponse.place.latLng
-
-                            if (latLng != null) {
-                                cameraPositionState.position =
-                                    CameraPosition.fromLatLngZoom(latLng, 15f)
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val response = placesClient.findAutocompletePredictions(request).await()
+                                withContext(Dispatchers.Main) {
+                                    predictions = response.autocompletePredictions
+                                    showPredictions = predictions.isNotEmpty()
+                                }
+                            } catch (e: Exception) {
+                                println("Error fetching places: ${e.message}")
                             }
                         }
-                    } catch (e: Exception) {
-                        println("Error fetching places: ${e.message}")
+                    } else {
+                        showPredictions = false
+                    }
+                },
+                placeholder = { Text("Search places...") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Show predictions list when user types
+            if (showPredictions) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .heightIn(max = 200.dp)
+                ) {
+                    items(predictions) { prediction ->
+                        Text(
+                            text = prediction.getPrimaryText(null).toString(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showPredictions = false
+                                    getPlaceDetails(prediction.placeId, placesClient) { latLng ->
+                                        if (latLng != null) {
+                                            searchedLatLng = latLng
+                                            cameraPositionState.position = CameraPosition.fromLatLngZoom(latLng, 15f)
+                                        }
+                                    }
+                                }
+                                .padding(8.dp)
+                        )
                     }
                 }
             }
         }
     }
+}
 
 @Composable
 fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Double) {
@@ -324,17 +365,29 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
     val database = FirebaseDatabase.getInstance()
     val safeLatLng = "${latitude.toString().replace(".", "_dot_").replace("-", "_neg_")}_${longitude.toString().replace(".", "_dot_").replace("-", "_neg_")}"
     val weatherRef = database.getReference("weather/$safeLatLng")
-    val tideRef = database.getReference("tide/$safeLatLng")
+
+    val stationId = "8720218"
+    val tideRef = database.getReference("tide").child(stationId)
+
 
     // Ensure offline sync
-    weatherRef.keepSynced(true)
+    weatherRef.keepSynced(false)
     tideRef.keepSynced(true)
+
+    var weatherLoaded by remember { mutableStateOf(false) }
+    var tideLoaded by remember { mutableStateOf(false) }
 
 
     fun fetchData() {
         coroutineScope.launch {
             isLoading = true
             try {
+                if (weatherData != null) {
+                    Log.d("WeatherScreen", "Offline mode: Keeping cached weather data")
+                    isLoading = false
+                    return@launch // Exit early if offline & already have cached data
+                }
+
                 val weatherUrl =
                     "https://api.open-meteo.com/v1/forecast?latitude=$latitude&longitude=$longitude" +
                             "&current=temperature_2m,precipitation,wind_speed_10m,wind_direction_10m" +
@@ -342,8 +395,9 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
                             "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset" +
                             "&temperature_unit=fahrenheit&wind_speed_unit=kn&precipitation_unit=inch&timezone=GMT"
 
-                val weatherResponse = fetchWeatherDataWithGson(weatherUrl)
-                weatherData = """
+                try {
+                    val weatherResponse = fetchWeatherDataWithGson(weatherUrl)
+                    weatherData = """
                     Temperature: ${weatherResponse.hourly.temperature_2m[0]} ${weatherResponse.hourly_units.temperature_2m}
                     Wind Speed: ${weatherResponse.hourly.wind_speed_10m[0]} ${weatherResponse.hourly_units.wind_speed_10m}
                     Max Temp: ${weatherResponse.daily.temperature_2m_max[0]} ${weatherResponse.daily_units.temperature_2m_max}
@@ -351,15 +405,27 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
                     Sunrise: ${weatherResponse.daily.sunrise[0]}
                     Sunset: ${weatherResponse.daily.sunset[0]}
                 """.trimIndent()
+                    weatherRef.setValue(weatherData)
+
+            } catch (e: Exception) {
+                Log.e("WeatherScreen", "Weather API Fetch Error: ${e.message}", e)
+                weatherData = "Error fetching weather data"
+            }
+
 
                 // Fetch tide data
-                val tideResponse = TideService.fetchTideData()
-                tideData = tideResponse?.data?.joinToString("\n") { "${it.time}: ${it.height} ft" }
-                    ?: "No tide data available"
+                val tideResponse = TideService.fetchTideData(stationId)
+                if (tideResponse != null) {
+                    tideData = tideResponse.data?.joinToString("\n") { "${it.time}: ${it.height} ft" }
+                        ?: "No tide data available"
 
-                // Save to Firebase
-                weatherRef.setValue(weatherData)
-                tideRef.setValue(tideData)
+                    if (tideResponse.data != null) {
+                        tideRef.setValue(tideResponse)
+                    }
+
+                } else {
+                    Log.e("WeatherScreen", "Failed to fetch tide data")
+                }
 
             } catch (e: Exception) {
                 errorMessage = "Error fetching data: ${e.localizedMessage}"
@@ -374,17 +440,38 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
     LaunchedEffect(Unit) {
         isLoading = true
 
-        val weatherListener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                if (snapshot.exists()) {
-                    weatherData = snapshot.getValue(String::class.java)
-                }
-                // Fetch API only if both Firebase data are missing
-                if (weatherData == null && tideData == null) {
+        Log.d("WeatherScreen", "Fetching weather data from Firebase path: weather/$safeLatLng")
+
+        fun checkIfDataIsMissing() {
+            if (weatherLoaded && tideLoaded) {
+                if (weatherData == "No weather data available" || tideData == "No tide data available") {
                     fetchData()
                 } else {
                     isLoading = false
                 }
+            }
+        }
+
+        val weatherListener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                Log.d("WeatherScreen", "Weather Data Snapshot: ${snapshot.value} | Exists: ${snapshot.exists()}")
+                Log.d("WeatherScreen", "Snapshot Value: ${snapshot.value}")
+
+                if (snapshot.exists()) {
+                    val weatherValue = snapshot.getValue(String::class.java)
+                    if (weatherValue != null) {
+                        weatherData = weatherValue
+                        Log.d("WeatherScreen", "Weather Data Loaded: $weatherData")
+                    } else {
+                        weatherData = "No weather data available"
+                        Log.e("WeatherScreen", "Weather data exists but is null")
+                    }
+                } else {
+                    weatherData = "No cached weather data available"
+                    Log.e("WeatherScreen", "No weather data found in Firebase")
+                }
+                weatherLoaded = true
+                checkIfDataIsMissing()
             }
 
             override fun onCancelled(error: DatabaseError) {
@@ -396,15 +483,27 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
 
         val tideListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                if (snapshot.exists()) {
-                    tideData = snapshot.getValue(String::class.java)
-                }
-                // Fetch API only if both Firebase data are missing
-                if (weatherData == null && tideData == null) {
-                    fetchData()
+                if (snapshot.exists() && snapshot.hasChild("data")) {
+                    val tideDataList = snapshot.child("data").children.mapNotNull {
+                        try {
+                            it.getValue(TideDataPoint::class.java)
+                        } catch (e: Exception) {
+                            Log.e("WeatherScreen", "Error parsing tide data: ${e.message}")
+                            null
+                        }
+                    }
+                    tideData = if (tideDataList.isNotEmpty()) {
+                        tideDataList.joinToString("\n") { "${it.time}: ${it.height} ft" }
+                    } else {
+                        "No tide data available"
+                    }
                 } else {
-                    isLoading = false
+                    Log.e("WeatherScreen", "No tide data found in Firebase")
+                    tideData = "No tide data available"
                 }
+
+                tideLoaded = true
+                checkIfDataIsMissing()
             }
 
             override fun onCancelled(error: DatabaseError) {
@@ -437,10 +536,11 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
                 Column {
                     // Refresh Button
                     Button(
-                        onClick = { fetchData() },
+                        onClick = { if (!isLoading) fetchData() },
+                        enabled = !isLoading,
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                     ) {
-                        Text("Refresh Data")
+                        Text(if (isLoading) "Loading..." else "Refresh")
                     }
 
                     // Weather Data
@@ -465,6 +565,7 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
         }
     }
 }
+
 
     @Composable
     fun MoreScreen(modifier: Modifier = Modifier, onNavigate: (String) -> Unit) {
