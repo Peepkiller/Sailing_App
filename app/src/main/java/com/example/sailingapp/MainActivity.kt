@@ -36,10 +36,13 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -62,7 +65,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.sailingapp.PlacesHelper.getPlaceDetails
 import com.example.sailingapp.ui.theme.SailingAppTheme
@@ -81,12 +87,16 @@ import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 
 class MainActivity : ComponentActivity() {
@@ -127,7 +137,7 @@ class MainActivity : ComponentActivity() {
                 MainScreen(
                     userLatitude = userLatitude,
                     userLongitude = userLongitude,
-                    placesClient = placesClient
+                    placesClient = placesClient,
                 )
             }
         }
@@ -233,11 +243,14 @@ fun GpsLogsScreen(
     var showRecentSearches by remember { mutableStateOf(searchQuery.isEmpty()) }
     val focusRequester = remember { FocusRequester() }
     var isSearchFocused by remember { mutableStateOf(false) }
+    var selectedMarker by remember { mutableStateOf<LatLng?>(null) }
 
     val markerState = remember { mutableStateOf(MarkerState(LatLng(lat, lng))) }
     var searchedLatLng by remember { mutableStateOf<LatLng?>(null) }
     var predictions by remember { mutableStateOf<List<AutocompletePrediction>>(emptyList()) }
     var showPredictions by remember { mutableStateOf(false) }
+    var route by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+    val coroutineScope = rememberCoroutineScope()
 
     // Initialize location on app launch
     LaunchedEffect(Unit) {
@@ -258,6 +271,56 @@ fun GpsLogsScreen(
         }
     }
 
+    LaunchedEffect(isSearchFocused) {
+        if (isSearchFocused && searchQuery.isEmpty()) {
+            showRecentSearches = true
+        }
+    }
+
+    LaunchedEffect(searchedLatLng) {
+        searchedLatLng?.let { destination ->
+            coroutineScope.launch {
+                val fetchedRoute = getDirections(markerState.value.position, destination)
+                withContext(Dispatchers.Main) {
+                    route = fetchedRoute
+                    FirebaseLogHelper.saveLog(
+                        title = destination.toString(),
+                        notes = "Automatically saved trip",
+                        routePoints = fetchedRoute,
+                        startLocation = markerState.value.position.toString(),
+                        endLocation = destination.toString(),
+                        onSuccess = { Log.d("Firebase", "Trip saved successfully") },
+                        onFailure = { Log.e("Firebase", "Error saving trip: ${it.message}") }
+                    )
+                }
+            }
+        }
+    }
+
+    selectedMarker?.let { location ->
+        Box(
+            modifier = Modifier
+                .padding(bottom = 100.dp)
+                .background(Color.White, shape = RoundedCornerShape(12.dp))
+                .padding(8.dp)
+        ) {
+            Button(
+                onClick = {
+                    coroutineScope.launch {
+                        val fetchedRoute = getDirections(markerState.value.position, location)
+                        withContext(Dispatchers.Main) {
+                            route = fetchedRoute
+                            Log.d("GpsLogsScreen", "Route button clicked - ${route.size} points")
+                        }
+                    }
+                }
+            ) {
+                Text("Get Directions")
+            }
+        }
+    }
+
+
     Box(modifier = modifier.fillMaxSize()
             .pointerInput(Unit) {
                 detectTapGestures(
@@ -275,7 +338,8 @@ fun GpsLogsScreen(
             uiSettings = MapUiSettings(
                 compassEnabled = true,
                 myLocationButtonEnabled = false
-            )
+            ),
+            onMapClick = { selectedMarker = null }
         ) {
             // Marker for user's current location
             if (isLocationInitialized) {
@@ -286,12 +350,44 @@ fun GpsLogsScreen(
             }
 
             // Marker for searched location
-            searchedLatLng?.let {
+            searchedLatLng?.let { location ->
                 Marker(
-                    state = MarkerState(it),
+                    state = MarkerState(location),
                     title = "Searched Location",
-                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE),
+                    onClick = {
+                        selectedMarker = location
+                        true
+                    }
                 )
+            }
+
+            if (route.isNotEmpty()) {
+                Polyline(
+                    points = route,
+                    color = Color.Blue,
+                    width = 8f
+                )
+            }
+        }
+
+        selectedMarker?.let { location ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 100.dp)
+                    .background(Color.White, shape = RoundedCornerShape(12.dp))
+                    .padding(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        coroutineScope.launch {
+                            route = getDirections(markerState.value.position, location) // Fetch route
+                        }
+                    }
+                ) {
+                    Text("Get Directions")
+                }
             }
         }
 
@@ -333,7 +429,8 @@ fun GpsLogsScreen(
 
                         CoroutineScope(Dispatchers.IO).launch {
                             try {
-                                val response = placesClient.findAutocompletePredictions(request).await()
+                                val response =
+                                    placesClient.findAutocompletePredictions(request).await()
                                 withContext(Dispatchers.Main) {
                                     predictions = response.autocompletePredictions
                                     showPredictions = predictions.isNotEmpty()
@@ -347,11 +444,16 @@ fun GpsLogsScreen(
                     }
                 },
                 placeholder = { Text("Search places...") },
-                modifier = Modifier.fillMaxWidth()
+                singleLine = true,
+                maxLines = 1,
+                modifier = Modifier
+                    .fillMaxWidth()
                     .focusRequester(focusRequester)
                     .onFocusChanged { focusState ->
                         isSearchFocused = focusState.isFocused
-                        showRecentSearches = isSearchFocused
+                        if (isSearchFocused && searchQuery.isEmpty()) {
+                            showRecentSearches = true
+                        }
                     }
             )
 
@@ -376,8 +478,7 @@ fun GpsLogsScreen(
                                     getPlaceDetails(recent, placesClient) { latLng ->
                                         if (latLng != null) {
                                             searchedLatLng = latLng
-                                            cameraPositionState.position =
-                                                CameraPosition.fromLatLngZoom(latLng, 15f)
+                                            cameraPositionState.position = CameraPosition.fromLatLngZoom(latLng, 15f)
                                         }
                                     }
                                 }
@@ -421,8 +522,9 @@ fun GpsLogsScreen(
     }
 }
 
+
 @Composable
-fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Double) {
+fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Double)  {
     var weatherData by remember { mutableStateOf<String?>(null) }
     var tideData by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(true) }
@@ -431,158 +533,150 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
 
     val database = FirebaseDatabase.getInstance()
     val safeLatLng = "${latitude.toString().replace(".", "_dot_").replace("-", "_neg_")}_${longitude.toString().replace(".", "_dot_").replace("-", "_neg_")}"
-    val weatherRef = database.getReference("weather/$safeLatLng")
+    val weatherRootRef = database.getReference("weather") // Root reference
+    var weatherRef by remember { mutableStateOf(database.getReference("weather")) } // Mutable reference
 
     val stationId = "8720218"
     val tideRef = database.getReference("tide").child(stationId)
 
-
     // Ensure offline sync
-    weatherRef.keepSynced(false)
     tideRef.keepSynced(true)
 
-    var weatherLoaded by remember { mutableStateOf(false) }
+    val weatherLoaded by remember { mutableStateOf(false) }
     var tideLoaded by remember { mutableStateOf(false) }
-
 
     fun fetchData() {
         coroutineScope.launch {
             isLoading = true
             try {
-                if (weatherData != null) {
+                if (weatherData != null && weatherData != "No weather data available. Connect to the internet to refresh.") {
                     Log.d("WeatherScreen", "Offline mode: Keeping cached weather data")
                     isLoading = false
                     return@launch // Exit early if offline & already have cached data
                 }
-
-                val weatherUrl =
-                    "https://api.open-meteo.com/v1/forecast?latitude=$latitude&longitude=$longitude" +
-                            "&current=temperature_2m,precipitation,wind_speed_10m,wind_direction_10m" +
-                            "&hourly=temperature_2m,precipitation_probability,rain,visibility,wind_speed_10m" +
-                            "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset" +
-                            "&temperature_unit=fahrenheit&wind_speed_unit=kn&precipitation_unit=inch&timezone=GMT"
-
                 try {
-                    val weatherResponse = fetchWeatherDataWithGson(weatherUrl)
-                    weatherData = """
-                    Temperature: ${weatherResponse.hourly.temperature_2m[0]} ${weatherResponse.hourly_units.temperature_2m}
-                    Wind Speed: ${weatherResponse.hourly.wind_speed_10m[0]} ${weatherResponse.hourly_units.wind_speed_10m}
-                    Max Temp: ${weatherResponse.daily.temperature_2m_max[0]} ${weatherResponse.daily_units.temperature_2m_max}
-                    Min Temp: ${weatherResponse.daily.temperature_2m_min[0]} ${weatherResponse.daily_units.temperature_2m_min}
-                    Sunrise: ${weatherResponse.daily.sunrise[0]}
-                    Sunset: ${weatherResponse.daily.sunset[0]}
+                    val weatherUrl =
+                        "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current=temperature_2m,precipitation,wind_speed_10m&hourly=temperature_2m,precipitation_probability,rain,visibility,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,sunrise&temperature_unit=fahrenheit&wind_speed_unit=kn&precipitation_unit=inch&timezone=GMT"
+
+                    try {
+                        val weatherResponse = fetchWeatherDataWithGson(weatherUrl)
+                        val formattedWeatherData = """    
+                Temperature: ${weatherResponse.current.temperature_2m} ${weatherResponse.current_units.temperature_2m}
+                Wind Speed: ${weatherResponse.current.wind_speed_10m} ${weatherResponse.current_units.wind_speed_10m}
+                Precipitation: ${weatherResponse.current.precipitation} ${weatherResponse.current_units.precipitation}
+                Max Temp: ${weatherResponse.daily.temperature_2m_max[0]} ${weatherResponse.daily_units.temperature_2m_max}
+                Min Temp: ${weatherResponse.daily.temperature_2m_min[0]} ${weatherResponse.daily_units.temperature_2m_min}
+                Sunrise: ${weatherResponse.daily.sunrise[0]}
                 """.trimIndent()
-                    weatherRef.setValue(weatherData)
+                        weatherData = formattedWeatherData
+                        weatherRef.setValue(formattedWeatherData)
 
-            } catch (e: Exception) {
-                Log.e("WeatherScreen", "Weather API Fetch Error: ${e.message}", e)
-                weatherData = "Error fetching weather data"
-            }
-
-
-                // Fetch tide data
-                val tideResponse = TideService.fetchTideData(stationId)
-                if (tideResponse != null) {
-                    tideData = tideResponse.data?.joinToString("\n") { "${it.time}: ${it.height} ft" }
-                        ?: "No tide data available"
-
-                    if (tideResponse.data != null) {
-                        tideRef.setValue(tideResponse)
+                    } catch (e: Exception) {
+                        Log.e("WeatherScreen", "Weather API Fetch Error: ${e.message}", e)
+                        weatherData = "Error fetching weather data"
+                        weatherRef.setValue("Error fetching weather data")
                     }
 
-                } else {
-                    Log.e("WeatherScreen", "Failed to fetch tide data")
-                }
+                    // Fetch tide data
+                    val tideResponse = TideService.fetchTideData(stationId)
+                    if (tideResponse != null) {
+                        tideData =
+                            tideResponse.data?.joinToString("\n") { "${it.time}: ${it.height} ft" }
+                                ?: "No tide data available"
 
-            } catch (e: Exception) {
-                errorMessage = "Error fetching data: ${e.localizedMessage}"
-                Log.e("WeatherScreen", "API Fetch Error: ${e.message}", e)
+                        if (tideResponse.data != null) {
+                            tideRef.setValue(tideResponse)
+                        }
+
+                    } else {
+                        Log.e("WeatherScreen", "Failed to fetch tide data")
+                    }
+
+                } catch (e: Exception) {
+                    errorMessage = "Error fetching data: ${e.localizedMessage}"
+                    Log.e("WeatherScreen", "API Fetch Error: ${e.message}", e)
+                } finally {
+                    isLoading = false
+                }
             } finally {
                 isLoading = false
             }
         }
     }
 
-    //Load Firebase data first, then fetch API data if needed
+    // Load Firebase data first, then fetch API data if needed
     LaunchedEffect(Unit) {
         isLoading = true
 
-        Log.d("WeatherScreen", "Fetching weather data from Firebase path: weather/$safeLatLng")
+        findClosestWeatherKey(weatherRootRef, safeLatLng) { closestKey ->
+            if (closestKey != null) {
+                weatherRef = database.getReference("weather/$closestKey")
+                Log.d("WeatherScreen", "Using closest weather key: $closestKey")
+            } else {
+                Log.e("WeatherScreen", "No close weather key found, using default path")
+                weatherRef = database.getReference("weather/$safeLatLng") // Keep fallback
+            }
 
-        fun checkIfDataIsMissing() {
-            if (weatherLoaded && tideLoaded) {
-                if (weatherData == "No weather data available" || tideData == "No tide data available") {
-                    fetchData()
-                } else {
+            fun checkIfDataIsMissing() {
+                if (weatherLoaded && tideLoaded) {
+                    if (weatherData == "No weather data available" || tideData == "No tide data available") {
+                        fetchData()
+                    } else {
+                        isLoading = false
+                    }
+                }
+            }
+
+            val weatherListener = object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    weatherData = if (snapshot.exists() && snapshot.value != null) {
+                        snapshot.getValue(String::class.java) ?: "No cached weather data"
+                    } else {
+                        "No weather data available. Connect to the internet to refresh."
+                    }
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    errorMessage = "Offline mode: Using last cached weather data."
+                }
+            }
+
+            val tideListener = object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    if (snapshot.exists() && snapshot.hasChild("data")) {
+                        val tideDataList = snapshot.child("data").children.mapNotNull {
+                            try {
+                                it.getValue(TideDataPoint::class.java)
+                            } catch (e: Exception) {
+                                Log.e("WeatherScreen", "Error parsing tide data: ${e.message}")
+                                null
+                            }
+                        }
+                        tideData = if (tideDataList.isNotEmpty()) {
+                            tideDataList.joinToString("\n") { "${it.time}: ${it.height} ft" }
+                        } else {
+                            "No tide data available"
+                        }
+                    } else {
+                        Log.e("WeatherScreen", "No tide data found in Firebase")
+                        tideData = "No tide data available"
+                    }
+
+                    tideLoaded = true
+                    checkIfDataIsMissing()
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    errorMessage = "Firebase tide error: ${error.message}"
+                    Log.e("WeatherScreen", "Firebase Tide Error: ${error.message}")
                     isLoading = false
                 }
             }
+
+            // Attach listeners
+            weatherRef.addListenerForSingleValueEvent(weatherListener)
+            tideRef.addListenerForSingleValueEvent(tideListener)
         }
-
-        val weatherListener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                Log.d("WeatherScreen", "Weather Data Snapshot: ${snapshot.value} | Exists: ${snapshot.exists()}")
-                Log.d("WeatherScreen", "Snapshot Value: ${snapshot.value}")
-
-                if (snapshot.exists()) {
-                    val weatherValue = snapshot.getValue(String::class.java)
-                    if (weatherValue != null) {
-                        weatherData = weatherValue
-                        Log.d("WeatherScreen", "Weather Data Loaded: $weatherData")
-                    } else {
-                        weatherData = "No weather data available"
-                        Log.e("WeatherScreen", "Weather data exists but is null")
-                    }
-                } else {
-                    weatherData = "No cached weather data available"
-                    Log.e("WeatherScreen", "No weather data found in Firebase")
-                }
-                weatherLoaded = true
-                checkIfDataIsMissing()
-            }
-
-            override fun onCancelled(error: DatabaseError) {
-                errorMessage = "Firebase weather error: ${error.message}"
-                Log.e("WeatherScreen", "Firebase Weather Error: ${error.message}")
-                isLoading = false
-            }
-        }
-
-        val tideListener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                if (snapshot.exists() && snapshot.hasChild("data")) {
-                    val tideDataList = snapshot.child("data").children.mapNotNull {
-                        try {
-                            it.getValue(TideDataPoint::class.java)
-                        } catch (e: Exception) {
-                            Log.e("WeatherScreen", "Error parsing tide data: ${e.message}")
-                            null
-                        }
-                    }
-                    tideData = if (tideDataList.isNotEmpty()) {
-                        tideDataList.joinToString("\n") { "${it.time}: ${it.height} ft" }
-                    } else {
-                        "No tide data available"
-                    }
-                } else {
-                    Log.e("WeatherScreen", "No tide data found in Firebase")
-                    tideData = "No tide data available"
-                }
-
-                tideLoaded = true
-                checkIfDataIsMissing()
-            }
-
-            override fun onCancelled(error: DatabaseError) {
-                errorMessage = "Firebase tide error: ${error.message}"
-                Log.e("WeatherScreen", "Firebase Tide Error: ${error.message}")
-                isLoading = false
-            }
-        }
-
-        // Attach listeners
-        weatherRef.addListenerForSingleValueEvent(weatherListener)
-        tideRef.addListenerForSingleValueEvent(tideListener)
     }
 
     // Refresh Button Effect
@@ -592,8 +686,8 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
 
     // UI rendering
     Box(modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp)
+        .fillMaxSize()
+        .padding(16.dp)
     ) {
         when {
             isLoading -> Text("Loading weather and tide data...", Modifier.align(Alignment.Center))
@@ -610,28 +704,19 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
                     }
 
                     // Weather Data
-                    Text(
-                        text = "Weather Data:",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                    Text(text = weatherData ?: "No weather data available")
+                    Text("Weather Data:", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(bottom = 8.dp))
+                    Text(weatherData ?: "No weather data available")
 
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Tide Data
-                    Text(
-                        text = "Tide Data:",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                    Text(text = tideData ?: "No tide data available")
+                    Text("Tide Data:", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
+                    Text(tideData ?: "No tide data available")
                 }
             }
         }
     }
 }
-
 
     @Composable
     fun MoreScreen(modifier: Modifier = Modifier, onNavigate: (String) -> Unit) {
@@ -826,6 +911,20 @@ fun SpeedDistanceCalculatorScreen(onBack: () -> Unit) {
 
 @Composable
 fun LogsScreen(onBack: () -> Unit) {
+    var title by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    var tripLogs by remember { mutableStateOf<List<TripLog>>(emptyList()) }
+    var isSaving by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    // Load logs from Firebase
+    LaunchedEffect(Unit) {
+        FirebaseLogHelper.getLogs(
+            onLogsFetched = { logs -> tripLogs = logs },
+            onFailure = { error -> Toast.makeText(context, "Error: ${error.message}", Toast.LENGTH_SHORT).show() }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -838,12 +937,91 @@ fun LogsScreen(onBack: () -> Unit) {
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        Text(text = "Logs feature coming soon...")
+        // Title Input
+        OutlinedTextField(
+            value = title,
+            onValueChange = { title = it },
+            label = { Text("Title") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        // Notes Input
+        OutlinedTextField(
+            value = notes,
+            onValueChange = { notes = it },
+            label = { Text("Notes") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Save Button
+        Button(
+            onClick = {
+                if (title.isNotEmpty() && notes.isNotEmpty()) {
+                    isSaving = true
+                    FirebaseLogHelper.saveLog(
+                        title = title,
+                        notes = notes,
+                        routePoints = emptyList(), // Can add routePoints later when saving trip directions
+                        startLocation = "Start Point",
+                        endLocation = "End Point",
+                        onSuccess = {
+                            Toast.makeText(context, "Log saved!", Toast.LENGTH_SHORT).show()
+                            title = ""
+                            notes = ""
+                            isSaving = false
+                        },
+                        onFailure = { error ->
+                            Toast.makeText(context, "Error: ${error.message}", Toast.LENGTH_SHORT).show()
+                            isSaving = false
+                        }
+                    )
+                } else {
+                    Toast.makeText(context, "Title and Notes are required!", Toast.LENGTH_SHORT).show()
+                }
+            },
+            enabled = !isSaving
+        ) {
+            Text(if (isSaving) "Saving..." else "Save Log")
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Display Logs List
+        LazyColumn(
+            modifier = Modifier.weight(1f)
+        ) {
+            items(tripLogs) { log ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp)
+                    ) {
+                        Text(text = log.title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(text = log.notes, fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Text(text = "From: ${log.startLocation} To: ${log.endLocation}", fontSize = 12.sp)
+                        Text(text = "Date: ${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(
+                            Date(log.timestamp)
+                        )}", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Back Button
         Button(onClick = onBack) {
             Text("Back")
         }
     }
 }
+
