@@ -12,7 +12,9 @@ data class RoutePoint(
     val lat: Double = 0.0,
     val lng: Double = 0.0
 )
+
 data class TripLog(
+    val id: String = "",
     val title: String = "",
     val notes: String = "",
     val routePoints: List<RoutePoint> = emptyList(),
@@ -36,6 +38,7 @@ object FirebaseLogHelper {
     ) {
         val logId = database.push().key ?: return
         val logData = mapOf(
+            "id" to logId,
             "title" to title,
             "notes" to notes,
             "routePoints" to routePoints.map { RoutePoint(it.latitude, it.longitude)  },
@@ -54,7 +57,8 @@ object FirebaseLogHelper {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val logs = snapshot.children.mapNotNull {
                     try {
-                        it.getValue(TripLog::class.java)
+                        val log = it.getValue(TripLog::class.java)
+                        log?.copy(id = it.key ?: "")
                     } catch (e: Exception) {
                         Log.e("Firebase", "Error parsing log: ${e.message}")
                         null
@@ -68,4 +72,13 @@ object FirebaseLogHelper {
             }
         })
     }
+
+    fun deleteLog(logId: String, onSuccess: () -> Unit, onFailure: (Exception) -> Unit) {
+        database.child(logId).removeValue()
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { error -> onFailure(error) }
+    }
 }
+
+
+

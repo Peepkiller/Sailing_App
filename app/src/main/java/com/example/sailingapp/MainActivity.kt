@@ -17,8 +17,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,20 +33,27 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ElevatedButton
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -66,6 +75,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,6 +86,9 @@ import com.example.sailingapp.PlacesHelper.getPlaceDetails
 import com.example.sailingapp.ui.theme.SailingAppTheme
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.Dot
+import com.google.android.gms.maps.model.Gap
+import com.google.android.gms.maps.model.JointType
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.model.AutocompletePrediction
 import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRequest
@@ -112,13 +127,9 @@ class MainActivity : ComponentActivity() {
 
         FirebaseDatabase.getInstance().setPersistenceEnabled(true)
 
-        // Initialize PlacesClient
         placesClient = PlacesHelper.initializePlaces(this)
-
-        // Initialize LocationHelper
         locationHelper = LocationHelper(this)
 
-        // Initialize the permission request launcher
         requestPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { isGranted: Boolean ->
@@ -133,12 +144,28 @@ class MainActivity : ComponentActivity() {
 
         // Set up UI
         setContent {
+            var isLoggedIn by remember { mutableStateOf(LoginHelper.isUserLoggedIn(this)) }
+            var isSignUpScreen by remember { mutableStateOf(false) }
+
             SailingAppTheme {
-                MainScreen(
-                    userLatitude = userLatitude,
-                    userLongitude = userLongitude,
-                    placesClient = placesClient,
-                )
+                if (isLoggedIn) {
+                    MainScreen(userLatitude, userLongitude, placesClient, onLogout = {
+                        LoginHelper.logout(this)
+                        isLoggedIn = false
+                    })
+                } else {
+                    if (isSignUpScreen) {
+                        SignUpScreen(onSignUpSuccess = {
+                            isSignUpScreen = false
+                            isLoggedIn = true
+                        })
+                    } else {
+                        LoginScreen(
+                            onLoginSuccess = { isLoggedIn = true },
+                            onNavigateToSignUp = { isSignUpScreen = true }
+                        )
+                    }
+                }
             }
         }
     }
@@ -164,8 +191,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-    @Composable
-    fun MainScreen(userLatitude: Double, userLongitude: Double, placesClient: PlacesClient) {
+@Composable
+fun MainScreen(userLatitude: Double, userLongitude: Double, placesClient: PlacesClient, onLogout: () -> Unit) {
         var selectedTab by remember { mutableIntStateOf(0) } // State for tab selection
         var searchQuery by remember { mutableStateOf("") } // State for search query
         var moreScreenSubpage by remember { mutableStateOf("") } // Tracks subpage navigation in MoreScreen
@@ -176,17 +203,28 @@ class MainActivity : ComponentActivity() {
         Scaffold(
             bottomBar = {
                 BottomAppBar {
-                    IconButton(onClick = { selectedTab = 0 }) {
-                        Icon(
-                            imageVector = Icons.Filled.LocationOn,
-                            contentDescription = "GPS & Logs"
-                        )
-                    }
-                    IconButton(onClick = { selectedTab = 1 }) { // Weather tab
-                        Icon(imageVector = Icons.Filled.Cloud, contentDescription = "Weather")
-                    }
-                    IconButton(onClick = { selectedTab = 2 }) { // More features tab
-                        Icon(imageVector = Icons.Filled.MoreHoriz, contentDescription = "More")
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        IconButton(
+                            onClick = { selectedTab = 0 },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.LocationOn,
+                                contentDescription = "GPS & Logs"
+                            )
+                        }
+                        IconButton(
+                            onClick = { selectedTab = 1 },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(imageVector = Icons.Filled.Cloud, contentDescription = "Weather")
+                        }
+                        IconButton(
+                            onClick = { selectedTab = 2 },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(imageVector = Icons.Filled.MoreHoriz, contentDescription = "More")
+                        }
                     }
                 }
             }
@@ -211,7 +249,8 @@ class MainActivity : ComponentActivity() {
                 2 -> if (moreScreenSubpage.isEmpty()) {
                     MoreScreen(
                         modifier = Modifier.padding(innerPadding),
-                        onNavigate = { moreScreenSubpage = it } // Navigate to specific subpages
+                        onNavigate = { moreScreenSubpage = it },
+                        onLogout = onLogout
                     )
                 } else {
                     when (moreScreenSubpage) {
@@ -298,8 +337,7 @@ fun GpsLogsScreen(
     }
 
     selectedMarker?.let { location ->
-        Box(
-            modifier = Modifier
+        Box(modifier = Modifier
                 .padding(bottom = 100.dp)
                 .background(Color.White, shape = RoundedCornerShape(12.dp))
                 .padding(8.dp)
@@ -345,7 +383,9 @@ fun GpsLogsScreen(
             if (isLocationInitialized) {
                 Marker(
                     state = markerState.value,
-                    title = "You are here"
+                    title = "You are here",
+                    snippet = "Current Location",
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)
                 )
             }
 
@@ -366,7 +406,9 @@ fun GpsLogsScreen(
                 Polyline(
                     points = route,
                     color = Color.Blue,
-                    width = 8f
+                    width = 12f,
+                    jointType = JointType.ROUND,
+                    pattern = listOf(Dot(), Gap(20f))
                 )
             }
         }
@@ -392,7 +434,7 @@ fun GpsLogsScreen(
         }
 
         // Floating Action Button to fetch and update location
-        FloatingActionButton(
+        ExtendedFloatingActionButton(
             onClick = {
                 locationHelper.fetchLocation { latitude, longitude ->
                     lat = latitude
@@ -401,12 +443,12 @@ fun GpsLogsScreen(
                     markerState.value = MarkerState(LatLng(lat, lng))
                 }
             },
+            icon = { Icon(imageVector = Icons.Filled.LocationOn, contentDescription = "Find me") },
+            text = { Text("Find Me") },
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp,  top = 90.dp)
-        ) {
-            Icon(imageVector = Icons.Filled.LocationOn, contentDescription = "Find me")
-        }
+                .align(Alignment.BottomStart)
+                .padding(16.dp)
+        )
 
         // Search bar logic for places
         Column(
@@ -416,7 +458,7 @@ fun GpsLogsScreen(
                 .background(Color.White, shape = RoundedCornerShape(8.dp))
                 .padding(8.dp)
         ) {
-            TextField(
+            OutlinedTextField(
                 value = searchQuery,
                 onValueChange = {
                     onSearchQueryChanged(it)
@@ -466,10 +508,8 @@ fun GpsLogsScreen(
                         .heightIn(max = 150.dp)
                 ) {
                     items(recentSearches) { recent ->
-                        Text(
-                            text = recent,
-                            color = Color.Black,
-                            modifier = Modifier
+                        Column(
+                            Modifier
                                 .fillMaxWidth()
                                 .clickable {
                                     onSearchQueryChanged(recent)
@@ -482,8 +522,11 @@ fun GpsLogsScreen(
                                         }
                                     }
                                 }
-                                .padding(8.dp)
-                        )
+                                .padding(12.dp)
+                        ) {
+                            Text(text = recent, color = Color.Black, style = MaterialTheme.typography.bodyMedium)
+                            HorizontalDivider(color = Color.Gray.copy(alpha = 0.5f), thickness = 1.dp)
+                        }
                     }
                 }
             }
@@ -607,6 +650,7 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
     // Load Firebase data first, then fetch API data if needed
     LaunchedEffect(Unit) {
         isLoading = true
+        fetchData()
 
         findClosestWeatherKey(weatherRootRef, safeLatLng) { closestKey ->
             if (closestKey != null) {
@@ -687,65 +731,129 @@ fun WeatherScreen(modifier: Modifier = Modifier, latitude: Double, longitude: Do
     // UI rendering
     Box(modifier = modifier
         .fillMaxSize()
-        .padding(16.dp)
+        .padding(16.dp),
+        contentAlignment = Alignment.TopCenter
     ) {
         when {
             isLoading -> Text("Loading weather and tide data...", Modifier.align(Alignment.Center))
             errorMessage != null -> Text("Error: $errorMessage", Modifier.align(Alignment.Center))
             else -> {
-                Column {
-                    // Refresh Button
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ){
+
                     Button(
                         onClick = { if (!isLoading) fetchData() },
                         enabled = !isLoading,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                     ) {
                         Text(if (isLoading) "Loading..." else "Refresh")
                     }
 
                     // Weather Data
-                    Text("Weather Data:", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(bottom = 8.dp))
-                    Text(weatherData ?: "No weather data available")
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.Start
+                        ) {
+                            Text(
+                                text = "Weather Data",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            Text(weatherData ?: "No weather data available")
+                        }
+                    }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Tide Data
-                    Text("Tide Data:", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
-                    Text(tideData ?: "No tide data available")
+                    // Tide Card
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.Start
+                        ) {
+                            Text(
+                                text = "Tide Data",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            Text(tideData ?: "No tide data available")
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-    @Composable
-    fun MoreScreen(modifier: Modifier = Modifier, onNavigate: (String) -> Unit) {
+@Composable
+fun MoreScreen(modifier: Modifier = Modifier, onNavigate: (String) -> Unit, onLogout: () -> Unit) {
         Column(
             modifier = modifier
                 .fillMaxSize()
                 .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
                 text = "Marine Navigation Tools",
                 style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.padding(bottom = 16.dp)
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
 
-            Button(onClick = { onNavigate("compass") }, modifier = Modifier.fillMaxWidth()) {
-                Text("Compass")
+            ElevatedButton(onClick = { onNavigate("compass") }, modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text("Compass", fontSize = 18.sp, fontWeight = FontWeight.Medium)
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(onClick = { onNavigate("calculator") }, modifier = Modifier.fillMaxWidth()) {
-                Text("Speed/Distance Calculator")
+            ElevatedButton(onClick = { onNavigate("calculator") }, modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text("Speed/Distance Calculator", fontSize = 18.sp, fontWeight = FontWeight.Medium)
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            ElevatedButton(onClick = { onNavigate("logs") }, modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text("Trip Logs", fontSize = 18.sp, fontWeight = FontWeight.Medium)
+            }
 
-            Button(onClick = { onNavigate("logs") }, modifier = Modifier.fillMaxWidth()) {
-                Text("Trip Logs")
+            Spacer(modifier = Modifier.weight(1f))
+
+            Button(
+                onClick = onLogout,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.Red,
+                    contentColor = Color.White
+                )
+            ) {
+                Text("Logout", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -811,6 +919,12 @@ fun CompassScreen(onBack: () -> Unit) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier.align(Alignment.Start)
+        ) {
+            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+        }
         Text(
             text = "Compass",
             style = MaterialTheme.typography.headlineMedium,
@@ -828,12 +942,6 @@ fun CompassScreen(onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onPrimary
             )
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = onBack) {
-            Text("Back")
-        }
     }
 }
 
@@ -849,6 +957,13 @@ fun SpeedDistanceCalculatorScreen(onBack: () -> Unit) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier.align(Alignment.Start)
+        ) {
+            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+        }
+
         Text(
             text = "Speed/Distance Calculator",
             style = MaterialTheme.typography.headlineMedium,
@@ -900,14 +1015,9 @@ fun SpeedDistanceCalculatorScreen(onBack: () -> Unit) {
             label = { Text("Distance (nautical miles)") },
             modifier = Modifier.fillMaxWidth()
         )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = onBack) {
-            Text("Back")
-        }
     }
 }
+
 
 @Composable
 fun LogsScreen(onBack: () -> Unit) {
@@ -925,12 +1035,32 @@ fun LogsScreen(onBack: () -> Unit) {
         )
     }
 
+    fun deleteLog(log: TripLog) {
+        FirebaseLogHelper.deleteLog(
+            logId = log.id,
+            onSuccess = {
+                Toast.makeText(context, "Log deleted!", Toast.LENGTH_SHORT).show()
+                tripLogs = tripLogs.filter { it.id != log.id }
+            },
+            onFailure = { error ->
+                Toast.makeText(context, "Error: ${error.message}", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier.align(Alignment.Start)
+        ) {
+            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+        }
+
         Text(
             text = "Trip Logs",
             style = MaterialTheme.typography.headlineMedium,
@@ -966,7 +1096,7 @@ fun LogsScreen(onBack: () -> Unit) {
                     FirebaseLogHelper.saveLog(
                         title = title,
                         notes = notes,
-                        routePoints = emptyList(), // Can add routePoints later when saving trip directions
+                        routePoints = emptyList(),
                         startLocation = "Start Point",
                         endLocation = "End Point",
                         onSuccess = {
@@ -1012,16 +1142,185 @@ fun LogsScreen(onBack: () -> Unit) {
                             Date(log.timestamp)
                         )}", fontSize = 12.sp)
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = { deleteLog(log) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Red,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Delete")
+                    }
                 }
             }
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(16.dp))
 
-        // Back Button
-        Button(onClick = onBack) {
-            Text("Back")
+
+@Composable
+fun LoginScreen(onLoginSuccess: () -> Unit, onNavigateToSignUp: () -> Unit) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showError by remember { mutableStateOf(false) }
+    var showPassword by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF2196F3)),
+            contentAlignment = Alignment.Center
+    ) {
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "Login", style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                OutlinedTextField(
+                    value = username ,
+                    onValueChange = { username  = it },
+                    label = { Text("Username ") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showPassword = !showPassword }) {
+                            Icon(
+                                imageVector = if (showPassword) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                contentDescription = if (showPassword) "Hide password" else "Show password"
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (showError) {
+                    Text("Invalid username or password", color = Color.Red, fontSize = 14.sp)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        if (LoginHelper.validateUser(context, username , password)) {
+                            onLoginSuccess()
+                        } else {
+                            showError = true
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Login")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                TextButton(onClick = onNavigateToSignUp) {
+                    Text("Don't have an account? Sign Up")
+                }
+            }
         }
     }
 }
+
+@Composable
+fun SignUpScreen(onSignUpSuccess: () -> Unit) {
+        var username by remember { mutableStateOf("") }
+        var password by remember { mutableStateOf("") }
+        var showPassword by remember { mutableStateOf(false) }
+        val context = LocalContext.current
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF2196F3)),
+                contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Sign Up", style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text("Username") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("Password") },
+                        singleLine = true,
+                        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { showPassword = !showPassword }) {  // <-- Toggle Button
+                                Icon(
+                                    imageVector = if (showPassword) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                    contentDescription = if (showPassword) "Hide password" else "Show password"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            if (username.isNotEmpty() && password.isNotEmpty()) {
+                                LoginHelper.saveUser(context, username, password)
+                                Toast.makeText(context, "Sign-up successful!", Toast.LENGTH_SHORT).show()
+                                onSignUpSuccess()
+                            } else {
+                                Toast.makeText(
+                                    context, "Please enter both fields", Toast.LENGTH_SHORT).show()
+
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Sign Up")
+                    }
+                }
+            }
+        }
+    }
 
